@@ -7,7 +7,7 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 const canvas = document.querySelector('#experience');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x03040a);
-scene.fog = new THREE.FogExp2(0x050714, 0.035);
+scene.fog = new THREE.FogExp2(0x050714, 0.018);
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -22,12 +22,15 @@ renderer.toneMappingExposure = 1.15;
 renderer.xr.enabled = true;
 document.body.appendChild(VRButton.createButton(renderer));
 
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 700);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.005, 1200);
 camera.position.set(0, 1.25, 1.35);
 
 const cabinRig = new THREE.Group();
 scene.add(cabinRig);
 cabinRig.add(camera);
+
+const rideScenery = new THREE.Group();
+scene.add(rideScenery);
 
 const thirdPersonTarget = new THREE.Object3D();
 thirdPersonTarget.position.set(0, 2.5, 7.5);
@@ -39,9 +42,11 @@ controls.enabled = false;
 
 const clock = new THREE.Clock();
 let speed = 0.055;
-let paused = false;
+let paused = true;
 let progress = 0;
 let cameraMode = 'cockpit';
+let sceneryVisible = false;
+rideScenery.visible = sceneryVisible;
 const worldUp = new THREE.Vector3(0, 1, 0);
 const tangent = new THREE.Vector3();
 const lookAt = new THREE.Vector3();
@@ -70,7 +75,7 @@ function createTube(curve, radius, color, metalness = 0.2, roughness = 0.45) {
 }
 
 // Riel central y rieles laterales.
-scene.add(createTube(trackCurve, 0.065, 0x8b93a8, 0.75, 0.28));
+rideScenery.add(createTube(trackCurve, 0.065, 0x8b93a8, 0.75, 0.28));
 const leftRailPoints = points.map((p, i) => {
   const prev = points[Math.max(i - 1, 0)];
   const next = points[Math.min(i + 1, points.length - 1)];
@@ -85,12 +90,12 @@ const rightRailPoints = points.map((p, i) => {
   const side = new THREE.Vector3().crossVectors(worldUp, dir).normalize().multiplyScalar(-0.58);
   return p.clone().add(side).add(new THREE.Vector3(0, -0.38, 0));
 });
-scene.add(createTube(new THREE.CatmullRomCurve3(leftRailPoints, true, 'catmullrom', 0.22), 0.045, 0x5f6676, 0.8, 0.35));
-scene.add(createTube(new THREE.CatmullRomCurve3(rightRailPoints, true, 'catmullrom', 0.22), 0.045, 0x5f6676, 0.8, 0.35));
+rideScenery.add(createTube(new THREE.CatmullRomCurve3(leftRailPoints, true, 'catmullrom', 0.22), 0.045, 0x5f6676, 0.8, 0.35));
+rideScenery.add(createTube(new THREE.CatmullRomCurve3(rightRailPoints, true, 'catmullrom', 0.22), 0.045, 0x5f6676, 0.8, 0.35));
 
 // Túnel futurista que refuerza velocidad y profundidad.
 const tunnel = new THREE.Group();
-scene.add(tunnel);
+rideScenery.add(tunnel);
 const ringMaterial = new THREE.MeshStandardMaterial({
   color: 0x11192c,
   emissive: 0x0b2058,
@@ -133,7 +138,7 @@ const particles = new THREE.Points(
     depthWrite: false
   })
 );
-scene.add(particles);
+rideScenery.add(particles);
 
 // Iluminación cinematográfica.
 scene.add(new THREE.HemisphereLight(0x7db9ff, 0x101018, 0.82));
@@ -206,29 +211,34 @@ function buildFallbackCabin() {
 }
 
 function enhanceCabinMaterials(root) {
-  const palette = [0x151d30, 0x1f2f53, 0x2d3d66, 0x08111e];
-  let meshIndex = 0;
+  const edgeMaterial = new THREE.LineBasicMaterial({
+    color: 0x8fd3ff,
+    transparent: true,
+    opacity: 0.55
+  });
+
   root.traverse((child) => {
     if (!child.isMesh) return;
     child.castShadow = true;
     child.receiveShadow = true;
     child.geometry.computeVertexNormals?.();
 
-    const name = `${child.name}`.toLowerCase();
-    const isGlass = name.includes('glass') || name.includes('window') || name.includes('visor');
-    const isSeat = name.includes('seat') || name.includes('chair') || name.includes('cushion');
-    const baseColor = palette[meshIndex % palette.length];
-    meshIndex += 1;
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (!material) continue;
+      material.side = THREE.DoubleSide;
+      material.needsUpdate = true;
+      if ('roughness' in material) material.roughness = Math.min(material.roughness ?? 0.55, 0.65);
+      if ('metalness' in material) material.metalness = Math.min(material.metalness ?? 0.15, 0.35);
+      if ('emissive' in material && material.emissive?.isColor) {
+        material.emissive.setHex(0x07111f);
+        material.emissiveIntensity = Math.max(material.emissiveIntensity ?? 0, 0.08);
+      }
+    }
 
-    child.material = new THREE.MeshStandardMaterial({
-      color: isSeat ? 0x08090f : baseColor,
-      metalness: isGlass ? 0.05 : 0.62,
-      roughness: isGlass ? 0.05 : 0.32,
-      transparent: isGlass,
-      opacity: isGlass ? 0.42 : 1,
-      emissive: isSeat ? 0x000000 : 0x06132e,
-      emissiveIntensity: isSeat ? 0 : 0.12
-    });
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(child.geometry, 30), edgeMaterial);
+    edges.name = `${child.name || 'mesh'}_visibility_edges`;
+    child.add(edges);
   });
 
   const neonMaterial = new THREE.MeshStandardMaterial({
@@ -281,6 +291,14 @@ function loadCabin() {
       enhanceCabinMaterials(fbx);
       fitCabinToRig(fbx);
       cabinRig.add(fbx);
+      window.__coasterDebug = {
+        cabinUrl,
+        fbx,
+        cabinRig,
+        camera,
+        scene,
+        rideScenery
+      };
       document.body.classList.add('ready');
     },
     undefined,
@@ -288,6 +306,15 @@ function loadCabin() {
       console.warn('No se pudo cargar cabin.fbx, usando cabina procedural.', error);
       const fallback = buildFallbackCabin();
       cabinRig.add(fallback);
+      window.__coasterDebug = {
+        cabinUrl,
+        fallback,
+        cabinRig,
+        camera,
+        scene,
+        rideScenery,
+        error
+      };
       document.body.classList.add('ready');
     }
   );
@@ -297,29 +324,31 @@ loadCabin();
 function setCameraMode(mode) {
   cameraMode = mode;
   controls.enabled = mode === 'inspect';
+  camera.near = 0.005;
+  camera.far = 1200;
   if (mode === 'cockpit') {
     cabinRig.add(camera);
-    camera.position.set(0, 1.23, 0.55);
+    camera.position.set(0, 1.45, 1.15);
     camera.rotation.set(0, 0, 0);
     camera.fov = 75;
     camera.updateProjectionMatrix();
   }
   if (mode === 'chase') {
     cabinRig.add(camera);
-    camera.position.set(0, 2.5, 7.5);
-    camera.lookAt(0, 1.1, -2.5);
-    camera.fov = 68;
+    camera.position.set(0, 2.8, 9.5);
+    camera.lookAt(0, 1.2, 0);
+    camera.fov = 58;
     camera.updateProjectionMatrix();
   }
   if (mode === 'inspect') {
     scene.add(camera);
-    camera.position.set(4, 4, 7);
+    camera.position.set(3.6, 2.8, 6.4);
     controls.target.copy(cabinRig.position);
-    camera.fov = 65;
+    camera.fov = 55;
     camera.updateProjectionMatrix();
   }
 }
-setCameraMode('cockpit');
+setCameraMode('inspect');
 
 function updateRig(delta) {
   if (!paused) {
@@ -377,6 +406,10 @@ window.addEventListener('keydown', (event) => {
   if (key === 'w') speed = Math.min(speed + 0.012, 0.22);
   if (key === 's') speed = Math.max(speed - 0.012, 0.006);
   if (key === ' ') paused = !paused;
+  if (key === 'h') {
+    sceneryVisible = !sceneryVisible;
+    rideScenery.visible = sceneryVisible;
+  }
   if (key === 'c') {
     const next = cameraMode === 'cockpit' ? 'chase' : cameraMode === 'chase' ? 'inspect' : 'cockpit';
     setCameraMode(next);
