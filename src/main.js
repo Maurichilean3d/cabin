@@ -274,8 +274,9 @@ function fitCabinToRig(root) {
 
 function loadCabin() {
   const loader = new FBXLoader();
+  const cabinUrl = `${import.meta.env.BASE_URL}assets/cabin.fbx`;
   loader.load(
-    '/assets/cabin.fbx',
+    cabinUrl,
     (fbx) => {
       enhanceCabinMaterials(fbx);
       fitCabinToRig(fbx);
